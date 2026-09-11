@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0",
+  "texture": {
+    "warp": {
+      "t1": 3.25,
+      "t2": 2.7
+    }
+  },
+  "optics": {
+    "radialBlur": {
+      "enabled": true,
+      "axis": "moving-panel-local-X",
+      "maxRadiusPx": 40,
+      "distanceExponent": 3.25,
+      "angleExponent": 2.05
+    },
+    "chromaticDispersion": {
+      "enabled": true,
+      "axis": "moving-panel-local-X",
+      "maxSeparationPx": 16
+    },
+    "cornerMask": {
+      "enabled": true,
+      "color": "#000000",
+      "maxOpacity": 1,
+      "reach": 5,
+      "distanceExponent": 1.75,
+      "angleExponent": 1.3
+    }
+  }
+}
