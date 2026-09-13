@@ -23,8 +23,8 @@ class FoldSurfaceView(
         keepScreenOn = true
     }
 
-    fun setFoldProgress(progress: Float) {
-        foldRenderer.setProgress(progress)
+    fun setFoldPose(pose: FoldPose) {
+        foldRenderer.setPose(pose)
     }
 
     fun setImage(bitmap: Bitmap) {

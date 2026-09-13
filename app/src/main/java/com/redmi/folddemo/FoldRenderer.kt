@@ -22,7 +22,7 @@ class FoldRenderer(
         }
 
     @Volatile
-    private var progress = 0f
+    private var pose = FoldPose(0f, FoldSide.RIGHT_EDGE_LIFT)
     private var program = 0
     private var texture = 0
     private var bitmap: Bitmap? = null
@@ -47,9 +47,10 @@ class FoldRenderer(
     private var maskReachLocation = -1
     private var maskDistanceExponentLocation = -1
     private var maskAngleExponentLocation = -1
+    private var awayDirectionLocation = -1
 
-    fun setProgress(value: Float) {
-        progress = value.coerceIn(0f, 1f)
+    fun setPose(value: FoldPose) {
+        pose = value.copy(progress = value.progress.coerceIn(0f, 1f))
     }
 
     fun setBitmap(value: Bitmap) {
@@ -75,7 +76,8 @@ class FoldRenderer(
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
         if (texture == 0 || program == 0) return
 
-        val p = progress
+        val currentPose = pose
+        val p = currentPose.progress
         val warp = FoldMath.homography(p, config.t1, config.t2)
 
         GLES30.glUseProgram(program)
@@ -119,6 +121,7 @@ class FoldRenderer(
         GLES30.glUniform1f(maskReachLocation, config.cornerMask.reach)
         GLES30.glUniform1f(maskDistanceExponentLocation, config.cornerMask.distanceExponent)
         GLES30.glUniform1f(maskAngleExponentLocation, config.cornerMask.angleExponent)
+        GLES30.glUniform1f(awayDirectionLocation, currentPose.side.awayDirection)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
@@ -162,6 +165,7 @@ class FoldRenderer(
         maskReachLocation = GLES30.glGetUniformLocation(program, "uMaskReach")
         maskDistanceExponentLocation = GLES30.glGetUniformLocation(program, "uMaskDistanceExponent")
         maskAngleExponentLocation = GLES30.glGetUniformLocation(program, "uMaskAngleExponent")
+        awayDirectionLocation = GLES30.glGetUniformLocation(program, "uAwayDirection")
     }
 
     private fun createProgram(vertexSource: String, fragmentSource: String): Int {
@@ -244,6 +248,7 @@ class FoldRenderer(
             uniform float uMaskReach;
             uniform float uMaskDistanceExponent;
             uniform float uMaskAngleExponent;
+            uniform float uAwayDirection;
             in vec2 vDomain;
             out vec4 fragColor;
 
@@ -259,8 +264,9 @@ class FoldRenderer(
                     float offsetPx = normalizedOffset * radiusPx;
                     vec2 greenUv = vec2(clamp(uv.x + offsetPx / uTextureWidth, 0.0, 1.0), uv.y);
                     float dispersionUv = dispersionPx / uTextureWidth;
-                    vec2 redUv = vec2(clamp(greenUv.x + dispersionUv, 0.0, 1.0), uv.y);
-                    vec2 blueUv = vec2(clamp(greenUv.x - dispersionUv, 0.0, 1.0), uv.y);
+                    float dispersionDirection = uAwayDirection;
+                    vec2 redUv = vec2(clamp(greenUv.x + dispersionUv * dispersionDirection, 0.0, 1.0), uv.y);
+                    vec2 blueUv = vec2(clamp(greenUv.x - dispersionUv * dispersionDirection, 0.0, 1.0), uv.y);
                     vec4 greenSample = texture(uTexture, greenUv);
                     vec4 spectralSample = dispersionPx > 0.0001
                         ? vec4(
@@ -278,8 +284,9 @@ class FoldRenderer(
 
             vec4 applyCornerMask(vec4 surfaceColor) {
                 if (!uCornerMaskEnabled) return surfaceColor;
-                float xRatio = clamp(vDomain.x / 9.0, 0.0, 1.0);
-                float topBoundaryY = uWarpD * vDomain.x / max(uWarpA, 0.0001);
+                float hingeLocalX = uAwayDirection > 0.0 ? vDomain.x : 9.0 - vDomain.x;
+                float xRatio = clamp(hingeLocalX / 9.0, 0.0, 1.0);
+                float topBoundaryY = uWarpD * hingeLocalX / max(uWarpA, 0.0001);
                 float bottomBoundaryY = 16.0 - topBoundaryY;
                 float inwardDistance = min(vDomain.y - topBoundaryY, bottomBoundaryY - vDomain.y);
                 float inwardFactor = 1.0 - smoothstep(0.0, uMaskReach, inwardDistance);
@@ -295,19 +302,21 @@ class FoldRenderer(
             }
 
             void main() {
-                float warpDenominator = uWarpA - uWarpG * vDomain.x;
-                float sourceU = vDomain.x / warpDenominator;
-                float sourceV = (vDomain.y * (uWarpG * sourceU + 1.0) - uWarpD * sourceU) / 16.0;
-                bool outside = sourceU < 0.0 || sourceU > 1.0 || sourceV < 0.0 || sourceV > 1.0;
+                float hingeLocalX = uAwayDirection > 0.0 ? vDomain.x : 9.0 - vDomain.x;
+                float warpDenominator = uWarpA - uWarpG * hingeLocalX;
+                float localSourceU = hingeLocalX / warpDenominator;
+                float globalSourceU = uAwayDirection > 0.0 ? localSourceU : 1.0 - localSourceU;
+                float sourceV = (vDomain.y * (uWarpG * localSourceU + 1.0) - uWarpD * localSourceU) / 16.0;
+                bool outside = localSourceU < 0.0 || localSourceU > 1.0 || sourceV < 0.0 || sourceV > 1.0;
                 if (outside) {
                     fragColor = vec4(0.0, 0.0, 0.0, 1.0);
                     return;
                 }
 
-                vec2 uv = vec2(sourceU, sourceV);
+                vec2 uv = vec2(globalSourceU, sourceV);
                 vec4 surfaceColor;
                 if (uRadialBlurEnabled || uChromaticDispersionEnabled) {
-                    float xRatio = clamp(vDomain.x / 9.0, 0.0, 1.0);
+                    float xRatio = clamp(hingeLocalX / 9.0, 0.0, 1.0);
                     float distanceFactor = pow(xRatio, uDistanceExponent);
                     float angleFactor = pow(uFoldSin, uAngleExponent);
                     float opticalFactor = angleFactor * distanceFactor;

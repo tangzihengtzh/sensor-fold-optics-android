@@ -10,7 +10,7 @@ import kotlin.math.exp
 
 class FoldSensorController(
     context: Context,
-    private val onProgress: (Float) -> Unit,
+    private val onPose: (FoldPose) -> Unit,
 ) : SensorEventListener {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -18,7 +18,8 @@ class FoldSensorController(
         ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
 
     private var baseline: Quaternion? = null
-    private var filteredProgress = 0f
+    private var filteredSignedProgress = 0f
+    private var activeSide = FoldSide.RIGHT_EDGE_LIFT
     private var lastTimestampNanos = 0L
     private var registered = false
 
@@ -46,9 +47,10 @@ class FoldSensorController(
 
     fun resetBaseline() {
         baseline = null
-        filteredProgress = 0f
+        filteredSignedProgress = 0f
+        activeSide = FoldSide.RIGHT_EDGE_LIFT
         lastTimestampNanos = 0L
-        onProgress(0f)
+        onPose(FoldPose(0f, activeSide))
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -61,12 +63,16 @@ class FoldSensorController(
         if (origin == null) {
             baseline = current
             lastTimestampNanos = event.timestamp
-            onProgress(0f)
+            onPose(FoldPose(0f, activeSide))
             return
         }
 
         val angle = FoldMath.relativeTwistYDegrees(origin, current)
-        val target = FoldMath.progressFromAngle(angle)
+        val targetPose = FoldMath.poseFromAngle(angle, previousSide = activeSide)
+        val targetSignedProgress = when (targetPose.side) {
+            FoldSide.RIGHT_EDGE_LIFT -> -targetPose.progress
+            FoldSide.LEFT_EDGE_LIFT -> targetPose.progress
+        }
         val elapsedSeconds = if (lastTimestampNanos == 0L) {
             0f
         } else {
@@ -74,8 +80,10 @@ class FoldSensorController(
         }
         lastTimestampNanos = event.timestamp
         val alpha = if (elapsedSeconds <= 0f) 1f else 1f - exp(-elapsedSeconds / SMOOTHING_SECONDS)
-        filteredProgress += (target - filteredProgress) * alpha
-        onProgress(filteredProgress.coerceIn(0f, 1f))
+        filteredSignedProgress += (targetSignedProgress - filteredSignedProgress) * alpha
+        val pose = FoldMath.poseFromSignedProgress(filteredSignedProgress, activeSide)
+        if (pose.progress >= SIDE_SWITCH_THRESHOLD) activeSide = pose.side
+        onPose(pose)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -83,5 +91,6 @@ class FoldSensorController(
     companion object {
         private const val TAG = "FoldSensor"
         private const val SMOOTHING_SECONDS = 0.055f
+        private const val SIDE_SWITCH_THRESHOLD = 0.002f
     }
 }

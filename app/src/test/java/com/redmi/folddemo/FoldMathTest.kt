@@ -47,4 +47,22 @@ class FoldMathTest {
 
         assertClose(40f, FoldMath.relativeTwistYDegrees(baseline, current), 0.001f)
     }
+
+    @Test
+    fun signedSensorAngleSelectsTheNaturallyMirroredLiftSide() {
+        val rightLift = FoldMath.poseFromAngle(-30f)
+        val leftLift = FoldMath.poseFromAngle(30f)
+
+        assertEquals(FoldSide.RIGHT_EDGE_LIFT, rightLift.side)
+        assertEquals(FoldSide.LEFT_EDGE_LIFT, leftLift.side)
+        assertClose(rightLift.progress, leftLift.progress)
+    }
+
+    @Test
+    fun flatPoseRetainsThePreviouslyActiveSide() {
+        val pose = FoldMath.poseFromAngle(0.5f, previousSide = FoldSide.LEFT_EDGE_LIFT)
+
+        assertClose(0f, pose.progress)
+        assertEquals(FoldSide.LEFT_EDGE_LIFT, pose.side)
+    }
 }

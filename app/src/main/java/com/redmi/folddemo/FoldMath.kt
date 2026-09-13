@@ -9,6 +9,16 @@ import kotlin.math.sqrt
 
 data class Homography(val a: Float, val d: Float, val g: Float)
 
+enum class FoldSide(val awayDirection: Float) {
+    RIGHT_EDGE_LIFT(1f),
+    LEFT_EDGE_LIFT(-1f),
+}
+
+data class FoldPose(
+    val progress: Float,
+    val side: FoldSide,
+)
+
 data class Quaternion(
     val x: Float,
     val y: Float,
@@ -65,6 +75,35 @@ object FoldMath {
         if (magnitude <= deadZoneDegrees) return 0f
         val range = (maxAngleDegrees - deadZoneDegrees).coerceAtLeast(0.001f)
         return ((magnitude - deadZoneDegrees) / range).coerceIn(0f, 1f)
+    }
+
+    fun poseFromAngle(
+        angleDegrees: Float,
+        maxAngleDegrees: Float = MAX_LIFT_ANGLE_DEGREES,
+        deadZoneDegrees: Float = SENSOR_DEAD_ZONE_DEGREES,
+        previousSide: FoldSide = FoldSide.RIGHT_EDGE_LIFT,
+    ): FoldPose {
+        val progress = progressFromAngle(angleDegrees, maxAngleDegrees, deadZoneDegrees)
+        val side = when {
+            progress == 0f -> previousSide
+            angleDegrees < 0f -> FoldSide.RIGHT_EDGE_LIFT
+            else -> FoldSide.LEFT_EDGE_LIFT
+        }
+        return FoldPose(progress, side)
+    }
+
+    fun poseFromSignedProgress(
+        signedProgress: Float,
+        previousSide: FoldSide = FoldSide.RIGHT_EDGE_LIFT,
+    ): FoldPose {
+        val clamped = signedProgress.coerceIn(-1f, 1f)
+        val progress = abs(clamped)
+        val side = when {
+            progress < 0.0001f -> previousSide
+            clamped < 0f -> FoldSide.RIGHT_EDGE_LIFT
+            else -> FoldSide.LEFT_EDGE_LIFT
+        }
+        return FoldPose(progress, side)
     }
 
     fun homography(progress: Float, t1: Float, t2: Float): Homography {
